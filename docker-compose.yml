@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: unebrasil
+      POSTGRES_USER: unebrasil
+      POSTGRES_PASSWORD: unebrasil
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    image: python:3.11-slim
+    working_dir: /work
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONPATH: /work
+    volumes:
+      - ./:/work
+    command: >
+      bash -c "
+      pip install --no-cache-dir -r requirements.txt &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      "
+    depends_on:
+      - db
+
+  sync_camara:
+    image: python:3.11-slim
+    working_dir: /work
+    environment:
+      PYTHONPATH: /work
+      DAYS_BACK: "30"
+    volumes:
+      - ./:/work
+    command: >
+      bash -c "
+      pip install --no-cache-dir -r requirements.txt &&
+      python sync/camara_sync.py
+      "
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
