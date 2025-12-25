@@ -1,8 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+import os
+from jose import jwt, JWTError
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, APIRouter
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 import json
 import asyncio
@@ -13,15 +15,58 @@ from fastapi.responses import StreamingResponse
 from app.database import SessionLocal, engine, Base
 from app.models import User, Decision, CitizenVote, OfficialVote, WalletTx
 import time
-	
+
+# guard admin (centralizado)
+def require_admin(request: Request):
+    expected = os.getenv('ADMIN_TOKEN', '')
+    token = request.headers.get('X-Admin-Token', '')
+    if not expected or token != expected:
+        raise HTTPException(status_code=401, detail='admin token inválido')
+    return True
+
+# router admin: qualquer rota /admin/* fica protegida automaticamente
+admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
-    yield
 
+    from app.models import User
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        for u in [
+            dict(id=1, email="user1@local", password_hash="x", is_active=True),
+            dict(id=2, email="user2@local", password_hash="x", is_active=True),
+        ]:
+            if not db.query(User).filter_by(id=u["id"]).first():
+                db.add(User(**u))
+        db.commit()
+    finally:
+        db.close()
+
+    yield
+    
 app = FastAPI(title="Unebrasil", lifespan=lifespan)
 
+# app.include_router(admin_router)  # FIX: moved below admin routes
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+# ===== JWT auth =====
+JWT_ALG = "HS256"
+JWT_EXPIRE_MINUTES = 60 * 24  # 24h
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET não definido (coloque no .env)")
+
+def create_access_token(user_id: int) -> str:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    exp = now + datetime.timedelta(minutes=JWT_EXPIRE_MINUTES)
+    payload = {"sub": str(user_id), "iat": int(now.timestamp()), "exp": int(exp.timestamp())}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -32,7 +77,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 from fastapi import Header
 
 def get_current_user_id(authorization: str | None = Header(default=None)) -> int:
-    # Espera: "Bearer user:123"
+    # Espera: "Bearer <JWT>"
     if not authorization:
         raise HTTPException(status_code=401, detail="faltou Authorization")
 
@@ -41,13 +86,27 @@ def get_current_user_id(authorization: str | None = Header(default=None)) -> int
         raise HTTPException(status_code=401, detail="Authorization inválido")
 
     token = parts[1]
-    if not token.startswith("user:"):
-        raise HTTPException(status_code=401, detail="token inválido")
-
     try:
-        return int(token.split(":", 1)[1])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        sub = payload.get("sub")
+        if not sub:
+            raise HTTPException(status_code=401, detail="token inválido")
+        user_id = int(sub)
+    except JWTError:
+        raise HTTPException(status_code=401, detail="token inválido")
     except Exception:
         raise HTTPException(status_code=401, detail="token inválido")
+
+    db = SessionLocal()
+    try:
+        u = db.query(User).filter(User.id == user_id).first()
+        if (not u) or (not u.is_active):
+            raise HTTPException(status_code=401, detail="token inválido")
+    finally:
+        db.close()
+
+    return user_id
+
 
 
 
@@ -62,6 +121,48 @@ def get_db():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@admin_router.get("/vote-audit")
+def admin_vote_audit(
+    request: Request,
+    decision_id: int | None = None,
+    user_id: int | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    # admin_router já está protegido por Depends(require_admin)
+    limit = max(1, min(limit, 200))
+
+    where = []
+    params = {"limit": limit}
+    if decision_id is not None:
+        where.append("decision_id = :d")
+        params["d"] = decision_id
+    if user_id is not None:
+        where.append("user_id = :u")
+        params["u"] = user_id
+
+    sql = "SELECT id, decision_id, user_id, choice, action, ip, user_agent, created_at FROM vote_audit"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY id DESC LIMIT :limit"
+
+    rows = db.execute(text(sql), params).mappings().all()
+    return {"items": [dict(r) for r in rows]}
+
+
+@admin_router.get("/users")
+def admin_users(limit: int = 20, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 200))
+    rows = (
+        db.query(User)
+        .order_by(User.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return {"items": [{"id": u.id, "email": u.email, "is_active": getattr(u, "is_active", True)} for u in rows]}
+
 
 class CreateDecisionIn(BaseModel):
     title: str
@@ -109,6 +210,19 @@ def me(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db
         raise HTTPException(status_code=401, detail="token inválido")
     return {"id": u.id, "email": u.email, "display_name": u.display_name}
 
+
+@app.get("/decisions/{decision_id}/my-vote")
+def my_vote(decision_id: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    v = (
+        db.query(CitizenVote)
+        .filter(CitizenVote.decision_id == decision_id, CitizenVote.voter_id == str(user_id))
+        .first()
+    )
+    if not v:
+        return {"decision_id": decision_id, "user_id": user_id, "choice": None}
+    return {"decision_id": decision_id, "user_id": user_id, "choice": v.choice, "updated_at": str(getattr(v, "updated_at", "")), "created_at": str(getattr(v, "created_at", ""))}
+
+
 @app.post("/auth/register")
 def register(payload: RegisterIn, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
@@ -129,7 +243,7 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="credenciais inválidas")
     if not verify_password(payload.password, u.password_hash):
         raise HTTPException(status_code=401, detail="credenciais inválidas")
-    return {"access_token": f"user:{u.id}", "token_type": "bearer", "user": {"id": u.id, "email": u.email, "display_name": u.display_name}}
+    return {"access_token": create_access_token(u.id), "token_type": "bearer", "user": {"id": u.id, "email": u.email, "display_name": u.display_name}}
 
 
 
@@ -204,39 +318,46 @@ def create_decision(payload: CreateDecisionIn, db: Session = Depends(get_db)):
     return {"id": d.id, "title": d.title, "status": "created"}
 
 
-@app.post("/vote")
-async def vote(payload: VoteIn, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    window_sec = 5
-    existing_rl = (
-        db.query(CitizenVote)
-        .filter_by(decision_id=payload.decision_id, voter_id=str(user_id))
-        .first()
-    )
-    if existing_rl and existing_rl.updated_at:
-        delta = datetime.datetime.now(datetime.timezone.utc) - existing_rl.updated_at
-        if delta.total_seconds() < window_sec:
-            raise HTTPException(status_code=429, detail=f"aguarde {window_sec}s para votar novamente nesta decisão")
 
+def _audit_vote(db: Session, decision_id: int, user_id: int, choice: str, action: str, request: Request | None = None):
+    ip = None
+    ua = None
+    if request is not None:
+        ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (request.client.host if request.client else None)
+        ua = request.headers.get("user-agent")
+
+    db.execute(
+        text("INSERT INTO vote_audit (decision_id, user_id, choice, action, ip, user_agent) VALUES (:d, :u, :c, :a, :ip, :ua)"),
+        {"d": decision_id, "u": user_id, "c": choice, "a": action, "ip": ip, "ua": ua},
+    )
+
+
+@app.post("/vote")
+async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     if payload.choice not in ("concordo", "discordo"):
-        raise HTTPException(
-            status_code=400,
-            detail="choice deve ser 'concordo' ou 'discordo'"
-        )
+        raise HTTPException(status_code=400, detail="choice deve ser 'concordo' ou 'discordo'")
 
     dec = db.query(Decision).filter_by(id=payload.decision_id).first()
     if not dec:
         raise HTTPException(status_code=404, detail="decisão não encontrada")
-
-    existing = (
-        db.query(CitizenVote)
-        .filter_by(decision_id=payload.decision_id, voter_id=str(user_id))
-        .first()
-    )
+    # sem cooldown: voto único por decisão, pode mudar quando quiser
+    existing = db.query(CitizenVote).filter_by(decision_id=payload.decision_id, voter_id=str(user_id)).first()
     if existing:
+        # idempotente: mesmo voto -> unchanged
+        if existing.choice == payload.choice:
+            counts = _count_citizen(db, payload.decision_id)
+            asyncio.create_task(_publish_safe(payload.decision_id, dict(
+                type='citizen_vote', status='ok', action='unchanged',
+                decision_id=payload.decision_id, choice=payload.choice,
+                user_id=user_id, counts=counts,
+            )))
+            _audit_vote(db, payload.decision_id, user_id, payload.choice, 'unchanged', request)
+            db.commit()
+            return dict(status='ok', action='unchanged', decision_id=payload.decision_id,
+                        choice=payload.choice, user_id=user_id, counts=counts)
+
         existing.choice = payload.choice
 
-        # Se por algum motivo o voto existe mas a recompensa não (caso antigo),
-        # garante a recompensa UMA ÚNICA vez.
         already_rewarded = (
             db.query(WalletTx)
             .filter_by(user_id=user_id, decision_id=payload.decision_id, kind="vote_reward")
@@ -261,38 +382,52 @@ async def vote(payload: VoteIn, user_id: int = Depends(get_current_user_id), db:
             "user_id": user_id,
             "counts": counts,
         }))
+        _audit_vote(db, payload.decision_id, user_id, payload.choice, "updated", request)
+        db.commit()
         return {"status": "ok", "action": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 
-    # Primeiro voto: cria o voto + recompensa no MESMO commit (atômico)
-    v = CitizenVote(
-        decision_id=payload.decision_id,
-        voter_id=str(user_id),
-        choice=payload.choice
-    )
-    db.add(v)
-
-    already_rewarded = (db.query(WalletTx).filter_by(user_id=user_id, decision_id=payload.decision_id, kind="vote_reward").first())
-    if not already_rewarded:
-        db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
-
     try:
+        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice)
+        db.add(v)
+        db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
         db.commit()
+
+        counts = _count_citizen(db, payload.decision_id)
+        asyncio.create_task(_publish_safe(payload.decision_id, {
+            "type": "citizen_vote",
+            "status": "ok",
+            "action": "created",
+            "decision_id": payload.decision_id,
+            "choice": payload.choice,
+            "user_id": user_id,
+            "counts": counts,
+        }))
+        _audit_vote(db, payload.decision_id, user_id, payload.choice, "created", request)
+        db.commit()
+        return {"status": "ok", "action": "created", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
+
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail="conflito ao salvar voto")
 
-    counts = _count_citizen(db, payload.decision_id)
-    asyncio.create_task(_publish_safe(payload.decision_id, {
-        "type": "citizen_vote",
-        "status": "ok",
-        "action": "created",
-        "decision_id": payload.decision_id,
-        "choice": payload.choice,
-        "user_id": user_id,
-        "counts": counts,
-    }))
+        existing2 = db.query(CitizenVote).filter_by(decision_id=payload.decision_id, voter_id=str(user_id)).first()
+        if existing2:
+            existing2.choice = payload.choice
 
-    return {"status": "ok", "action": "created", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
+            already_rewarded2 = (
+                db.query(WalletTx)
+                .filter_by(user_id=user_id, decision_id=payload.decision_id, kind="vote_reward")
+                .first()
+            )
+            if not already_rewarded2:
+                db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
+
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+
+        counts = _count_citizen(db, payload.decision_id)
+        return {"status": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 def _count_citizen(db: Session, decision_id: int):
     total = db.query(func.count(CitizenVote.id)).filter(CitizenVote.decision_id == decision_id).scalar() or 0
     concordo = db.query(func.count(CitizenVote.id)).filter(
@@ -498,3 +633,6 @@ def ranking_decisions(limit: int = 50, db: Session = Depends(get_db)):
         })
 
     return out
+
+# FIX: re-include admin_router (garante rotas declaradas)
+app.include_router(admin_router)

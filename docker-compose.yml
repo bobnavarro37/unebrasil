@@ -16,7 +16,11 @@ services:
     ports:
       - "8000:8000"
     environment:
+      ADMIN_TOKEN: dev-admin-token
+      VOTE_COOLDOWN_SEC: "60"
       PYTHONPATH: /work
+      JWT_SECRET: dev-secret-unebrasil
+      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - ./:/work
     command: >

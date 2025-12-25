@@ -6,3 +6,11 @@ __pycache__/
 .venv/
 .env
 *.log
+
+# python cache
+__pycache__/
+*.pyc
+
+# backups/rascunhos locais
+*.bak
+*.bak_*
