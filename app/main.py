@@ -51,7 +51,6 @@ async def lifespan(app: FastAPI):
     
 app = FastAPI(title="Unebrasil", lifespan=lifespan)
 
-# app.include_router(admin_router)  # FIX: moved below admin routes
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 # ===== JWT auth =====
@@ -164,6 +163,7 @@ def admin_users(limit: int = 20, db: Session = Depends(get_db)):
     return {"items": [{"id": u.id, "email": u.email, "is_active": getattr(u, "is_active", True)} for u in rows]}
 
 
+app.include_router(admin_router)
 class CreateDecisionIn(BaseModel):
     title: str
     source: str | None = None
@@ -633,6 +633,3 @@ def ranking_decisions(limit: int = 50, db: Session = Depends(get_db)):
         })
 
     return out
-
-# FIX: re-include admin_router (garante rotas declaradas)
-app.include_router(admin_router)
