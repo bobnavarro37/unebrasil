@@ -1,0 +1,19 @@
+                                       Table "public.citizen_votes"
+   Column    |           Type           | Collation | Nullable |                  Default                  
+-------------+--------------------------+-----------+----------+-------------------------------------------
+ id          | integer                  |           | not null | nextval('citizen_votes_id_seq'::regclass)
+ decision_id | integer                  |           | not null | 
+ voter_id    | character varying        |           | not null | 
+ choice      | character varying        |           | not null | 
+ updated_at  | timestamp with time zone |           | not null | now()
+ created_at  | timestamp with time zone |           | not null | now()
+Indexes:
+    "citizen_votes_pkey" PRIMARY KEY, btree (id)
+    "ix_citizen_votes_decision_id" btree (decision_id)
+    "uq_citizen_vote_decision_voter" UNIQUE CONSTRAINT, btree (decision_id, voter_id)
+    "ux_citizen_vote_user_decision" UNIQUE, btree (decision_id, voter_id)
+Foreign-key constraints:
+    "citizen_votes_decision_id_fkey" FOREIGN KEY (decision_id) REFERENCES decisions(id)
+Triggers:
+    trg_citizen_votes_updated_at BEFORE UPDATE ON citizen_votes FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+

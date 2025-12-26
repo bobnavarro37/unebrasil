@@ -191,3 +191,10 @@ api-1  | INFO:     172.18.0.1:36350 - "GET /health HTTP/1.1" 200 OK
 api-1  | INFO:     172.18.0.1:36360 - "GET /openapi.json HTTP/1.1" 200 OK
 api-1  | INFO:     172.18.0.1:57976 - "GET /health HTTP/1.1" 200 OK
 api-1  | INFO:     172.18.0.1:57984 - "GET /openapi.json HTTP/1.1" 200 OK
+
+## 2025-12-26T16:02:25Z
+- ✅ /vote idempotente (created/unchanged/updated) sem cooldown
+- ✅ vote_reward 1x por (user, decision)
+- ✅ /admin/vote-audit protegido por X-Admin-Token e aparece no OpenAPI
+- ✅ /decisions/{id}/my-vote retorna updated_at + created_at
+- ✅ DB: citizen_votes.created_at (timestamptz NOT NULL DEFAULT now) + model mapeado
