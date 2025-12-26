@@ -220,9 +220,14 @@ def my_vote(decision_id: int, user_id: int = Depends(get_current_user_id), db: S
     )
     if not v:
         return {"decision_id": decision_id, "user_id": user_id, "choice": None}
-    return {"decision_id": decision_id, "user_id": user_id, "choice": v.choice, "updated_at": str(getattr(v, "updated_at", "")), "created_at": str(getattr(v, "created_at", ""))}
 
-
+    return {
+        "decision_id": decision_id,
+        "user_id": user_id,
+        "choice": v.choice,
+        "updated_at": str(getattr(v, "updated_at", "")),
+        "created_at": str(getattr(v, "created_at", "")),
+    }
 @app.post("/auth/register")
 def register(payload: RegisterIn, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
