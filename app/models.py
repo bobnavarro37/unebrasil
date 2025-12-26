@@ -58,6 +58,7 @@ class CitizenVote(Base):
     choice = Column(String, nullable=False)  # concordo | discordo
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     __table_args__ = (
         UniqueConstraint("decision_id", "voter_id", name="uq_citizen_vote_decision_voter"),
     )
