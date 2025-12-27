@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:15
     environment:
-      POSTGRES_DB: unebrasil
-      POSTGRES_USER: unebrasil
-      POSTGRES_PASSWORD: unebrasil
+      POSTGRES_DB: ${POSTGRES_DB:-unebrasil}
+      POSTGRES_USER: ${POSTGRES_USER:-unebrasil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-unebrasil}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -15,11 +15,13 @@ services:
     working_dir: /work
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
-      ADMIN_TOKEN: dev-admin-token
-      VOTE_COOLDOWN_SEC: "60"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
+      VOTE_COOLDOWN_SEC: "${VOTE_COOLDOWN_SEC:-60}"
       PYTHONPATH: /work
-      JWT_SECRET: dev-secret-unebrasil
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-unebrasil}
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - ./:/work
@@ -34,9 +36,11 @@ services:
   sync_camara:
     image: python:3.11-slim
     working_dir: /work
+    env_file:
+      - .env
     environment:
       PYTHONPATH: /work
-      DAYS_BACK: "30"
+      DAYS_BACK: "${DAYS_BACK:-30}"
     volumes:
       - ./:/work
     command: >
