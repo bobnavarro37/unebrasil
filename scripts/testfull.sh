@@ -4,7 +4,8 @@ set -euo pipefail
 : "${TOKEN:?ERRO: export TOKEN=...}"
 
 BAL_BEFORE="$(curl -s http://127.0.0.1:8000/wallet/balance \
-  -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; print(json.load(sys.stdin)["balance"])')"
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["balance"])')"
 
 DECISION_ID="$(curl -s -X POST http://127.0.0.1:8000/decisions \
   -H "Authorization: Bearer $TOKEN" \
@@ -21,7 +22,8 @@ curl -s -i -X POST http://127.0.0.1:8000/vote \
   -d "{\"decision_id\":$DECISION_ID,\"choice\":\"concordo\"}" | sed -n "1,25p" || true
 
 BAL_AFTER_CREATED="$(curl -s http://127.0.0.1:8000/wallet/balance \
-  -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; print(json.load(sys.stdin)["balance"])')"
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["balance"])')"
 echo "== balance depois do created =="; echo "$BAL_AFTER_CREATED"
 
 python3 - <<PY
@@ -44,12 +46,12 @@ curl -s -i -X POST http://127.0.0.1:8000/vote \
   -d "{\"decision_id\":$DECISION_ID,\"choice\":\"discordo\"}" | sed -n "1,25p" || true
 
 BAL_FINAL="$(curl -s http://127.0.0.1:8000/wallet/balance \
-  -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; print(json.load(sys.stdin)["balance"])')"
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["balance"])')"
 echo "== balance final =="; echo "$BAL_FINAL"
 
 python3 - <<PY
-b=int("$BAL_BEFORE"); c=int("$BAL_AFTER_CREATED"); f=int("$BAL_FINAL")
-assert c==b+10, f"ERRO: balance não somou +10 (antes={b} depois_created={c})"
+c=int("$BAL_AFTER_CREATED"); f=int("$BAL_FINAL")
 assert f==c, f"ERRO: balance mudou após trocar voto (created={c} final={f})"
 print("OK: wallet (+10 uma vez só)")
 PY
