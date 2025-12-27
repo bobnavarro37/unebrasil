@@ -42,3 +42,6 @@ test:
 	curl -s -i -X POST http://127.0.0.1:8000/vote \
 	  -H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" \
 	  -d "{\"decision_id\":$$DECISION_ID,\"choice\":\"discordo\"}" | sed -n "1,25p" || true
+
+testfull:
+	./scripts/testfull.sh
