@@ -3,6 +3,14 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .PHONY: up migrate logs ps test
+
+help:
+	@echo "Targets:"
+	@echo "  make up       - sobe containers"
+	@echo "  make migrate  - roda migração no db"
+	@echo "  make logs     - logs do api"
+	@echo "  make ps       - status dos containers"
+	@echo "  make test     - teste rápido de cooldown"
 .SILENT: test
 
 up:
