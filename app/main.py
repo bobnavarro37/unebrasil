@@ -347,19 +347,6 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         raise HTTPException(status_code=404, detail="decisão não encontrada")
     # sem cooldown: voto único por decisão, pode mudar quando quiser
     existing = db.query(CitizenVote).filter_by(decision_id=payload.decision_id, voter_id=str(user_id)).first()
-    # cooldown (evita spam de troca de voto)
-    # se existir voto e foi atualizado há menos de VOTE_COOLDOWN_SEC, retorna 429
-    cooldown = int(os.getenv("VOTE_COOLDOWN_SEC", "60") or "60")
-    if existing and cooldown > 0:
-        now = datetime.datetime.now(datetime.timezone.utc)
-        last = existing.updated_at or existing.created_at
-        if last is not None:
-            # last pode vir sem tz em alguns setups -> força UTC
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=datetime.timezone.utc)
-            delta = (now - last).total_seconds()
-            if delta < cooldown:
-                raise HTTPException(status_code=429, detail=f"aguarde {int(cooldown - delta)}s")
     if existing:
         # idempotente: mesmo voto -> unchanged
         if existing.choice == payload.choice:
@@ -373,6 +360,19 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
             db.commit()
             return dict(status='ok', action='unchanged', decision_id=payload.decision_id,
                         choice=payload.choice, user_id=user_id, counts=counts)
+
+        # cooldown (evita spam de troca de voto)
+        # só aplica quando for TROCAR (unchanged passa direto)
+        cooldown = int(os.getenv("VOTE_COOLDOWN_SEC", "60") or "60")
+        if cooldown > 0:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            last = existing.updated_at or existing.created_at
+            if last is not None:
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=datetime.timezone.utc)
+                delta = (now - last).total_seconds()
+                if delta < cooldown:
+                    raise HTTPException(status_code=429, detail=f"aguarde {int(cooldown-delta)}s")
 
         existing.choice = payload.choice
 
