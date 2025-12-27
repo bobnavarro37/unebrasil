@@ -366,7 +366,7 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         cooldown = int(os.getenv("VOTE_COOLDOWN_SEC", "60") or "60")
         if cooldown > 0:
             now = datetime.datetime.now(datetime.timezone.utc)
-            last = existing.updated_at or existing.created_at
+            last = getattr(existing, 'last_changed_at', None) or existing.updated_at or existing.created_at
             if last is not None:
                 if last.tzinfo is None:
                     last = last.replace(tzinfo=datetime.timezone.utc)
@@ -374,7 +374,11 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
                 if delta < cooldown:
                     raise HTTPException(status_code=429, detail=f"aguarde {int(cooldown-delta)}s")
 
+        # troca real -> aplica cooldown e atualiza marcador
+
         existing.choice = payload.choice
+
+        existing.last_changed_at = datetime.datetime.now(datetime.timezone.utc)
 
         already_rewarded = (
             db.query(WalletTx)
@@ -405,7 +409,8 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         return {"status": "ok", "action": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 
     try:
-        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice)
+        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice,
+            last_changed_at=datetime.datetime.now(datetime.timezone.utc))
         db.add(v)
         db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
         db.commit()
