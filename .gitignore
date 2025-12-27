@@ -11,3 +11,8 @@ __pycache__/
 # backups/rascunhos locais
 *.bak
 *.bak_*
+
+# secrets local
+.env
+.env.*
+!.env.example
