@@ -13,7 +13,7 @@ PY
 )
 
 
-.PHONY: up migrate logs ps test
+.PHONY: up migrate logs ps test testfull token help
 .SILENT:
 
 help:
@@ -23,6 +23,8 @@ help:
 	@echo "  make logs     - logs do api"
 	@echo "  make ps       - status dos containers"
 	@echo "  make test     - teste rápido de cooldown"
+	@echo "  make token    - imprime TOKEN (JWT) do user 1"
+	@echo "  make testfull - teste completo (cooldown + wallet)"
 
 up:
 	docker compose up -d
@@ -56,7 +58,7 @@ test:
 	  -d "{\"decision_id\":$$DECISION_ID,\"choice\":\"discordo\"}" | sed -n "1,25p" || true
 
 testfull:
-	./scripts/testfull.sh
+	TOKEN="$${TOKEN:-$$TOKEN_GEN}" ./scripts/testfull.sh
 
 token:
 	@echo "$$TOKEN_GEN"
