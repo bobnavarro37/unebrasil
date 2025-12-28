@@ -2,6 +2,17 @@ SHELL := /bin/bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
 
+TOKEN_GEN = $(shell docker compose exec -T api python3 - <<'PY'
+import os, time
+from jose import jwt
+s=os.environ.get("JWT_SECRET")
+assert s, "JWT_SECRET não está no ambiente do container"
+now=int(time.time())
+print(jwt.encode({"sub":"1","iat":now,"exp":now+86400}, s, algorithm="HS256"))
+PY
+)
+
+
 .PHONY: up migrate logs ps test
 .SILENT:
 
@@ -26,6 +37,7 @@ ps:
 	docker compose ps
 
 test:
+	TOKEN="$${TOKEN:-$$TOKEN_GEN}"
 	: "$${TOKEN:?ERRO: export TOKEN=...}"
 	DECISION_JSON="$$(curl -s -X POST http://127.0.0.1:8000/decisions \
 	  -H "Authorization: Bearer $$TOKEN" \
@@ -45,3 +57,6 @@ test:
 
 testfull:
 	./scripts/testfull.sh
+
+token:
+	@echo "$$TOKEN_GEN"
