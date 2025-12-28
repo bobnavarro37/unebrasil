@@ -2,18 +2,7 @@ SHELL := /bin/bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
 
-TOKEN_GEN = $(shell docker compose exec -T api python3 - <<'PY'
-import os, time
-from jose import jwt
-s=os.environ.get("JWT_SECRET")
-assert s, "JWT_SECRET não está no ambiente do container"
-now=int(time.time())
-print(jwt.encode({"sub":"1","iat":now,"exp":now+86400}, s, algorithm="HS256"))
-PY
-)
-
-
-.PHONY: up migrate logs ps test testfull token help
+.PHONY: up migrate logs ps token test testfull help
 .SILENT:
 
 help:
@@ -22,9 +11,9 @@ help:
 	@echo "  make migrate  - roda migração no db"
 	@echo "  make logs     - logs do api"
 	@echo "  make ps       - status dos containers"
-	@echo "  make test     - teste rápido de cooldown"
-	@echo "  make token    - imprime TOKEN (JWT) do user 1"
-	@echo "  make testfull - teste completo (cooldown + wallet)"
+	@echo "  make token    - imprime um JWT de dev (user_id=1)"
+	@echo "  make test     - teste rápido de cooldown (cria + vota + tenta trocar)"
+	@echo "  make testfull - teste completo (cooldown + wallet, usa scripts/testfull.sh)"
 
 up:
 	docker compose up -d
@@ -38,9 +27,19 @@ logs:
 ps:
 	docker compose ps
 
+token:
+	docker compose exec -T api python3 - <<'PY'
+import os, time
+from jose import jwt
+s=os.environ.get("JWT_SECRET")
+assert s, "JWT_SECRET não está no ambiente do container"
+now=int(time.time())
+print(jwt.encode({"sub":"1","iat":now,"exp":now+86400}, s, algorithm="HS256"))
+PY
+
 test:
-	TOKEN="$${TOKEN:-$$TOKEN_GEN}"
-	: "$${TOKEN:?ERRO: export TOKEN=...}"
+	TOKEN="$${TOKEN:-$$(make -s token)}"
+	: "$${TOKEN:?ERRO: sem TOKEN}"
 	DECISION_JSON="$$(curl -s -X POST http://127.0.0.1:8000/decisions \
 	  -H "Authorization: Bearer $$TOKEN" \
 	  -H "Content-Type: application/json" \
@@ -58,7 +57,4 @@ test:
 	  -d "{\"decision_id\":$$DECISION_ID,\"choice\":\"discordo\"}" | sed -n "1,25p" || true
 
 testfull:
-	TOKEN="$${TOKEN:-$$TOKEN_GEN}" ./scripts/testfull.sh
-
-token:
-	@echo "$$TOKEN_GEN"
+	TOKEN="$${TOKEN:-$$(make -s token)}" ./scripts/testfull.sh
