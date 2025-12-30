@@ -17,3 +17,7 @@ __pycache__/
 # backups/rascunhos
 *.save
 *.save.*
+
+# backups locais
+Makefile.bak.*
+.env.bak.*
