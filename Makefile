@@ -2,6 +2,10 @@ SHELL := /bin/bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
 
+# carrega variáveis locais (ex: APP_TOKEN) sem quebrar se .env não existir
+-include .env
+export APP_TOKEN
+
 .PHONY: up migrate logs ps token login test testfull help
 .SILENT:
 
