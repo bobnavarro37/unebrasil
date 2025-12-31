@@ -37,9 +37,15 @@ async def lifespan(app: FastAPI):
 
     db = SessionLocal()
     try:
+        pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+        pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
         for u in [
-            dict(id=1, email="user1@local", password_hash="x", is_active=True),
-            dict(id=2, email="user2@local", password_hash="x", is_active=True),
+
+            dict(id=1, email="user1@local", password_hash=pwd.hash("123"), display_name="User 1", is_active=True),
+
+            dict(id=2, email="user2@local", password_hash=pwd.hash("123"), display_name="User 2", is_active=True),
+
         ]:
             if not db.query(User).filter_by(id=u["id"]).first():
                 db.add(User(**u))
