@@ -2,7 +2,7 @@ SHELL := /bin/bash
 .ONESHELL:
 .SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: up migrate logs ps token test testfull help
+.PHONY: up migrate logs ps token login test testfull help
 .SILENT:
 
 help:
@@ -12,6 +12,7 @@ help:
 	@echo "  make logs     - logs do api"
 	@echo "  make ps       - status dos containers"
 	@echo "  make token    - imprime um JWT de dev (user_id=1)"
+	@echo "  make login    - faz login e salva APP_TOKEN no .env"
 	@echo "  make test     - teste rápido de cooldown"
 	@echo "  make testfull - teste completo (cooldown + wallet)"
 
@@ -51,3 +52,12 @@ test:
 
 testfull:
 	APP_TOKEN="$${APP_TOKEN:-$$(make -s token)}"; TOKEN="$$APP_TOKEN" ./scripts/testfull.sh
+
+
+login:
+	APP_TOKEN="$$(curl -sS -X POST http://127.0.0.1:8000/auth/login \
+	  -H "Content-Type: application/json" \
+	  -d '{"email":"user1@local","password":"123"}' \
+	  | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')"
+	( grep -q '^APP_TOKEN=' .env 2>/dev/null && sed -i "s/^APP_TOKEN=.*/APP_TOKEN=$$APP_TOKEN/" .env || echo "APP_TOKEN=$$APP_TOKEN" >> .env )
+	echo "OK: APP_TOKEN salvo -> $${APP_TOKEN:0:16}..."
