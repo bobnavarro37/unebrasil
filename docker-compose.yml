@@ -22,6 +22,8 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
       VOTE_COOLDOWN_SEC: "${VOTE_COOLDOWN_SEC:-60}"
       PYTHONPATH: /work
+      ENV: prod
+      SMTP_STUB: "1"
       JWT_SECRET: ${JWT_SECRET:-dev-secret-unebrasil}
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
@@ -41,6 +43,8 @@ services:
       - .env
     environment:
       PYTHONPATH: /work
+      ENV: prod
+      SMTP_STUB: "1"
       DAYS_BACK: "${DAYS_BACK:-30}"
     volumes:
       - ./:/work

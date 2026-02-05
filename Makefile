@@ -24,7 +24,7 @@ up:
 	docker compose up -d
 
 migrate:
-	docker compose exec -T db psql -U unebrasil -d unebrasil -f /work/scripts/migrate.sql
+	@docker compose exec -T db psql -U unebrasil -d unebrasil -f /work/scripts/migrate.sql
 
 logs:
 	docker compose logs --tail 120 api
@@ -33,8 +33,13 @@ ps:
 	docker compose ps
 
 token:
-	docker compose exec -T api python3 -c 'import os,time; from jose import jwt; s=os.environ.get("JWT_SECRET"); assert s, "JWT_SECRET não está no ambiente do container"; now=int(time.time()); print(jwt.encode({"sub":"1","iat":now,"exp":now+86400}, s, algorithm="HS256"))'
-
+	@for i in $$(seq 1 80); do \
+	  code=$$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://127.0.0.1:8000/health || true); \
+	  [ "$$code" = "200" ] && break; \
+	  sleep 0.2; \
+	done; \
+	[ "$$code" = "200" ] || (echo "ERRO: /health não ficou 200" 1>&2; exit 1)
+	@@docker compose exec -T api python3 -c 'import os,time; from jose import jwt; s=os.environ.get("JWT_SECRET"); assert s, "JWT_SECRET não está no ambiente do container"; now=int(time.time()); print(jwt.encode({"sub":"1","iat":now,"exp":now+86400}, s, algorithm="HS256"))'
 test:
 	APP_TOKEN="$${APP_TOKEN:-$$(make -s token)}"; TOKEN="$$APP_TOKEN"
 	: "$${TOKEN:?ERRO: sem TOKEN}"

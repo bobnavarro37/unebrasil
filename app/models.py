@@ -10,7 +10,14 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     display_name = Column(String, nullable=True)
+    instagram = Column(String, nullable=True)
+    facebook = Column(String, nullable=True)
+    verify_code_hash = Column(String, nullable=True)
+    verify_code_expires_at = Column(DateTime(timezone=True), nullable=True)
+    verify_code_sent_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    is_verified = Column(Boolean, nullable=False, default=False)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -90,4 +97,20 @@ class OfficialVote(Base):
 
     __table_args__ = (
         UniqueConstraint("decision_id", "politician_id", name="uq_official_vote_decision_politician"),
+    )
+
+class ElectionLimit(Base):
+    __tablename__ = "election_limits"
+    id = Column(Integer, primary_key=True)
+
+    election_year = Column(Integer, nullable=False)   # ex: 2026
+    election_type = Column(String, nullable=False)    # ex: "geral"
+    office = Column(String, nullable=False)           # presidente|governador|senador|dep_federal|dep_estadual
+    max_reps = Column(Integer, nullable=False)
+
+    source = Column(String, nullable=False, default="auto")  # auto|manual_override|rule:year%8
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("election_year", "election_type", "office", name="uq_election_limit_year_type_office"),
     )

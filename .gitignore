@@ -21,3 +21,9 @@ __pycache__/
 # backups locais
 Makefile.bak.*
 .env.bak.*
+
+# snapshots gerados localmente
+/public_snapshots/
+
+# web backups
+web/src/*.bak*
