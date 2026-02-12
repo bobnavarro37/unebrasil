@@ -27,3 +27,8 @@ Makefile.bak.*
 
 # web backups
 web/src/*.bak*
+
+# local-only
+.backup_pass
+backups/
+app/*.bak.*

@@ -13,6 +13,7 @@ from typing import Dict, Set
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from app.donate import donate_router
 from app.database import SessionLocal, engine, Base
 from app.models import User, Politician, Decision, CitizenVote, OfficialVote, WalletTx, ElectionLimit
 import time
@@ -60,6 +61,7 @@ admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import app.models  # garante que todos os models registram no Base antes do create_all
     Base.metadata.create_all(bind=engine)
 
     from app.models import User
@@ -86,6 +88,8 @@ async def lifespan(app: FastAPI):
     yield
     
 app = FastAPI(title="Unebrasil", lifespan=lifespan)
+app.include_router(donate_router)
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
@@ -243,11 +247,6 @@ def admin_vote_audit(
     sql = "SELECT id, decision_id, user_id, choice, action, ip, user_agent, created_at FROM vote_audit"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY id DESC LIMIT :limit"
-
-    rows = db.execute(text(sql), params).mappings().all()
-    return {"items": [dict(r) for r in rows]}
-
 
 @admin_router.get("/users")
 def admin_users(limit: int = 20, db: Session = Depends(get_db)):
@@ -403,6 +402,23 @@ def public_snapshots(limit: int = 50):
         except Exception: items.append({"name":f,"bytes":None})
     from fastapi.responses import JSONResponse
     return JSONResponse({"total":len(files),"items":items}, headers={"Cache-Control":"public, max-age=60"})
+
+
+@app.get("/public/manifest")
+def public_manifest(limit: int = 50):
+    import hashlib
+    limit=max(1,min(limit,200)); d=_snap_dir()
+    if not os.path.isdir(d): return {"total":0,"items":[]}
+    files=[f for f in os.listdir(d) if f.endswith((".json",".txt",".csv"))]; files.sort(reverse=True)
+    items=[]
+    for f in files[:limit]:
+        pth=os.path.join(d,f)
+        if not os.path.isfile(pth): continue
+        h=hashlib.sha256()
+        with open(pth,"rb") as fp:
+            for ch in iter(lambda: fp.read(1024*1024), b""): h.update(ch)
+        items.append({"name":f,"bytes":int(os.stat(pth).st_size),"sha256":h.hexdigest()})
+    return {"total":len(files),"items":items}
 @app.get("/public/snapshots/{name}")
 @app.head("/public/snapshots/{name}", include_in_schema=False)
 def public_snapshot_get_head(name: str):
@@ -791,7 +807,7 @@ def me_representantes_add(
         "SELECT id FROM citizen_reps WHERE user_id=:u AND role=:r AND election_id=:e AND politician_id=:p AND ended_at IS NULL LIMIT 1"
     ), {"u": user_id, "r": role, "e": election_id, "p": int(payload.politician_id)}).first()
     if already:
-        return {"status": "ok", "action": "unchanged"}
+        return {"status": "ok", "action": "noop"}
 
     if active_count >= max_allowed:
         db.execute(text(
@@ -845,32 +861,31 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
     required_role = "dep_federal" if source == "camara" else ("senador" if source == "senado" else None)
     if not required_role:
         raise HTTPException(status_code=409, detail="decisão com source desconhecido (não dá pra validar cargo)")
-
-    rep_ok = db.execute(text("SELECT 1 FROM citizen_reps WHERE user_id=:u AND role=:r AND election_id=:e AND ended_at IS NULL LIMIT 1"), {"u": user_id, "r": required_role, "e": election_id}).first()
+    rep_ok = db.execute(text("SELECT 1 FROM official_votes WHERE decision_id=:d AND politician_id IN (SELECT politician_id FROM citizen_reps WHERE user_id=:u AND role=:r AND election_id=:e AND ended_at IS NULL) LIMIT 1"), {"d": payload.decision_id, "u": user_id, "r": required_role, "e": election_id}).first()
     if not rep_ok:
         raise HTTPException(status_code=403, detail="voto permitido apenas para decisões do(s) seu(s) representante(s)")
     # sem cooldown: voto único por decisão, pode mudar quando quiser
     existing = db.query(CitizenVote).filter_by(decision_id=payload.decision_id, voter_id=str(user_id)).first()
     if existing:
-        # idempotente: mesmo voto -> unchanged
+        # idempotente: mesmo voto -> noop
         if existing.choice == payload.choice:
             counts = _count_citizen(db, payload.decision_id)
             asyncio.create_task(_publish_safe(payload.decision_id, dict(
-                type='citizen_vote', status='ok', action='unchanged',
+                type='citizen_vote', status='ok', action='noop',
                 decision_id=payload.decision_id, choice=payload.choice,
                 user_id=user_id, counts=counts,
             )))
-            _audit_vote(db, payload.decision_id, user_id, payload.choice, 'unchanged', request)
+            _audit_vote(db, payload.decision_id, user_id, payload.choice, 'noop', request)
             db.commit()
-            return dict(status='ok', action='unchanged', decision_id=payload.decision_id,
+            return dict(status='ok', action='noop', decision_id=payload.decision_id,
                         choice=payload.choice, user_id=user_id, counts=counts)
 
         # cooldown (evita spam de troca de voto)
-        # só aplica quando for TROCAR (unchanged passa direto)
+        # só aplica quando for TROCAR (noop passa direto)
         cooldown = int(os.getenv("VOTE_COOLDOWN_SEC", "60") or "60")
         if cooldown > 0:
             now = datetime.now(timezone.utc)
-            last = getattr(existing, 'last_changed_at', None) or existing.updated_at or existing.created_at
+            last = getattr(existing, 'last_changed_at', None)
             if last is not None:
                 if last.tzinfo is None:
                     last = last.replace(tzinfo=datetime.timezone.utc)
@@ -913,8 +928,7 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         return {"status": "ok", "action": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 
     try:
-        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice,
-            last_changed_at=datetime.now(timezone.utc))
+        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice)
         db.add(v)
         db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
         db.commit()
@@ -930,13 +944,14 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
             "counts": counts,
         }))
         _audit_vote(db, payload.decision_id, user_id, payload.choice, "created", request)
-        db.commit()
         return {"status": "ok", "action": "created", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 
     except IntegrityError:
         db.rollback()
 
         existing2 = db.query(CitizenVote).filter_by(decision_id=payload.decision_id, voter_id=str(user_id)).first()
+        if not existing2:
+            raise HTTPException(status_code=409, detail="conflito ao salvar voto (IntegrityError)")
         if existing2:
             existing2.choice = payload.choice
 
@@ -954,7 +969,8 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
                 db.rollback()
 
         counts = _count_citizen(db, payload.decision_id)
-        return {"status": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
+        return {"status": "ok", "action": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
+
 def _count_citizen(db: Session, decision_id: int):
     total = db.query(func.count(CitizenVote.id)).filter(CitizenVote.decision_id == decision_id).scalar() or 0
     concordo = db.query(func.count(CitizenVote.id)).filter(

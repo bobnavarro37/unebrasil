@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, ForeignKey, UniqueConstraint,
+    Column, Integer, String, Text, Numeric, ForeignKey, UniqueConstraint,
     DateTime, Boolean, func
 )
 from app.database import Base
@@ -77,8 +77,8 @@ class WalletTx(Base):
     id = Column(Integer, primary_key=True)
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    amount = Column(Integer, nullable=False)  # em T$ (inteiro)
     kind = Column(String, nullable=False)     # ex: vote_reward
+    amount = Column(Integer, nullable=False)  # ex: +10
 
     decision_id = Column(Integer, ForeignKey("decisions.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -114,3 +114,4 @@ class ElectionLimit(Base):
     __table_args__ = (
         UniqueConstraint("election_year", "election_type", "office", name="uq_election_limit_year_type_office"),
     )
+
