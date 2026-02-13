@@ -888,7 +888,7 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
             last = getattr(existing, 'last_changed_at', None)
             if last is not None:
                 if last.tzinfo is None:
-                    last = last.replace(tzinfo=datetime.timezone.utc)
+                    last = last.replace(tzinfo=timezone.utc)
                 delta = (now - last).total_seconds()
                 if delta < cooldown:
                     raise HTTPException(status_code=429, detail=f"aguarde {int(cooldown-delta)}s")
@@ -907,11 +907,6 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         if not already_rewarded:
             db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
 
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(status_code=409, detail="conflito ao salvar voto")
 
         counts = _count_citizen(db, payload.decision_id)
         asyncio.create_task(_publish_safe(payload.decision_id, {
@@ -931,7 +926,6 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice)
         db.add(v)
         db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
-        db.commit()
 
         counts = _count_citizen(db, payload.decision_id)
         asyncio.create_task(_publish_safe(payload.decision_id, {
@@ -944,6 +938,11 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
             "counts": counts,
         }))
         _audit_vote(db, payload.decision_id, user_id, payload.choice, "created", request)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="conflito ao salvar voto")
         return {"status": "ok", "action": "created", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 
     except IntegrityError:
