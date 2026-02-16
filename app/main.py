@@ -885,15 +885,19 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         cooldown = int(os.getenv("VOTE_COOLDOWN_SEC", "60") or "60")
         if cooldown > 0:
             now = datetime.now(timezone.utc)
-            last = getattr(existing, 'last_changed_at', None)
-            if last is not None:
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                delta = (now - last).total_seconds()
+            last_eff = getattr(existing, "last_changed_at", None)
+            ca = getattr(existing, "created_at", None)
+            ua = getattr(existing, "updated_at", None)
+            # ignora somente o "lixo" de insert (quando last_changed_at ficou igual ao create e ainda nao houve update real)
+            if last_eff is not None and ca is not None and ua is not None:
+                if last_eff == ca and ua == ca:
+                    last_eff = None
+            if last_eff is not None:
+                if last_eff.tzinfo is None:
+                    last_eff = last_eff.replace(tzinfo=timezone.utc)
+                delta = (now - last_eff).total_seconds()
                 if delta < cooldown:
                     raise HTTPException(status_code=429, detail=f"aguarde {int(cooldown-delta)}s")
-
-        # troca real -> aplica cooldown e atualiza marcador
 
         existing.choice = payload.choice
 
@@ -923,8 +927,10 @@ async def vote(payload: VoteIn, request: Request, user_id: int = Depends(get_cur
         return {"status": "ok", "action": "updated", "decision_id": payload.decision_id, "choice": payload.choice, "user_id": user_id, "counts": counts}
 
     try:
-        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice)
+        v = CitizenVote(decision_id=payload.decision_id, voter_id=str(user_id), choice=payload.choice, last_changed_at=datetime.now(timezone.utc))
         db.add(v)
+        db.flush()
+        db.execute(text("UPDATE citizen_votes SET last_changed_at=NULL WHERE id=:id"), {"id": v.id})
         db.add(WalletTx(user_id=user_id, amount=10, kind="vote_reward", decision_id=payload.decision_id))
 
         counts = _count_citizen(db, payload.decision_id)
