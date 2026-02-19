@@ -1,3 +1,9 @@
+import os
+# garante env mínimo para importar app.main nos testes
+os.environ.setdefault('JWT_SECRET', 'test-secret')
+os.environ.setdefault('ELECTION_YEAR_DEFAULT', '2026')
+os.environ.setdefault('VOTE_COOLDOWN_SEC', '10')
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
